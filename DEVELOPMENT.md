@@ -5,9 +5,9 @@
 ### 必要な環境
 
 ```bash
-# Rust toolchain (最新安定版推奨)
-rustc 1.70.0+
-cargo 1.70.0+
+# Rust toolchain (2024 Edition使用)
+rustc 1.75.0+
+cargo 1.75.0+
 
 # 開発ツール
 clippy    # 静的解析
@@ -122,17 +122,17 @@ fn read_file(path: &Path) -> String {
 
 ## 🏗️ 新機能の実装手順
 
-### 1. Domain層の実装
+### 1. エディタコア層の実装
 
 ```bash
 # 1. テストファイル作成
-touch src/domain/new_feature.rs
+touch src/editor/new_feature.rs
 
 # 2. テスト駆動で実装
 cargo test new_feature_tests
 ```
 
-### 2. Application層の統合
+### 2. VIM機能層の統合
 
 ```rust
 // VimCommandに新しいコマンド追加
@@ -141,22 +141,24 @@ pub enum VimCommand {
     NewFeature,
 }
 
-// パーサーに追加
-fn parse_normal_mode_key(&mut self, key_event: KeyEvent) -> VimCommand {
-    match key_event {
-        // 新しいキーバインディング
-        KeyEvent { code: KeyCode::Char('n'), .. } => VimCommand::NewFeature,
-        // 既存の処理...
+// キーマッパーに追加
+impl KeyMapper {
+    fn parse_normal_mode_key(&mut self, key_event: KeyEvent) -> VimCommand {
+        match key_event {
+            // 新しいキーバインディング
+            KeyEvent { code: KeyCode::Char('n'), .. } => VimCommand::NewFeature,
+            // 既存の処理...
+        }
     }
 }
 ```
 
-### 3. Infrastructure層の更新（必要な場合）
+### 3. I/O層の更新（必要な場合）
 
 ```rust
 // 新しい外部依存が必要な場合
-pub trait NewDependency {
-    fn new_operation(&self) -> Result<()>;
+pub mod new_io_module {
+    pub fn new_operation(&self) -> Result<(), crate::error::RvimError>;
 }
 ```
 
@@ -168,36 +170,38 @@ pub trait NewDependency {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::editor::Position;
 
     #[test]
     fn test_cursor_movement() {
         // Arrange (Given)
-        let mut cursor = CursorPosition::new(0, 0);
+        let mut position = Position::new(0, 0);
         
         // Act (When)
-        cursor.move_right(10);
+        position = position.move_right(10);
         
         // Assert (Then)
-        assert_eq!(cursor.col, 1);
+        assert_eq!(position.col, 1);
     }
 }
 ```
 
-### Mockを使った統合テスト
+### 統合テスト
 
 ```rust
-#[test]
-fn test_editor_service_integration() {
-    // Mock作成
-    let mut mock_fs = MockFileSystem::new();
-    mock_fs.expect_read_file()
-           .with(eq(PathBuf::from("test.txt")))
-           .times(1)
-           .returning(|_| Ok("content".to_string()));
+use rvim::{Buffer, VimCommand};
+use tempfile::NamedTempFile;
 
+#[test]
+fn test_buffer_file_operations() {
+    // 一時ファイルを使ったテスト
+    let temp_file = NamedTempFile::new().unwrap();
+    let file_path = temp_file.path();
+    
     // テスト実行
-    let service = EditorService::new(mock_fs, mock_terminal);
-    let result = service.load_file("test.txt");
+    let mut buffer = Buffer::new();
+    buffer.insert_text(0, 0, "test content");
+    let result = buffer.save_to_file(file_path);
     
     assert!(result.is_ok());
 }
