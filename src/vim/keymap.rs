@@ -72,7 +72,7 @@ impl KeyMapper {
             Mode::Normal => self.map_normal_mode(key),
             Mode::Insert => self.map_insert_mode(key),
             Mode::Visual { .. } => self.map_visual_mode(key),
-            Mode::Command { .. } => self.map_command_mode(key),
+            Mode::Command { .. } => self.map_command_mode(key, mode),
         }
     }
 
@@ -119,7 +119,7 @@ impl KeyMapper {
             KeyCode::Esc => VimCommand::ExitToNormal,
             KeyCode::Char(c) => VimCommand::InsertChar(c),
             KeyCode::Enter => VimCommand::NewLine,
-            KeyCode::Backspace => VimCommand::DeleteChar, // TODO: 厳密にはbackspaceの動作
+            KeyCode::Backspace => VimCommand::DeleteCharBackward,
             _ => VimCommand::Noop,
         }
     }
@@ -139,14 +139,19 @@ impl KeyMapper {
         }
     }
 
-    fn map_command_mode(&self, key: &Key) -> VimCommand {
+    fn map_command_mode(&self, key: &Key, mode: &Mode) -> VimCommand {
         match key.code {
             KeyCode::Esc => VimCommand::ExitToNormal,
             KeyCode::Enter => {
-                // TODO: Parse command and return appropriate command
-                // For now, just exit to normal
-                VimCommand::ExitToNormal
+                // Execute the command with current input
+                if let Mode::Command { input } = mode {
+                    VimCommand::ExecuteCommand(input.clone())
+                } else {
+                    VimCommand::ExitToNormal
+                }
             }
+            KeyCode::Char(c) => VimCommand::CommandInput(c),
+            KeyCode::Backspace => VimCommand::CommandBackspace,
             _ => VimCommand::Noop,
         }
     }
@@ -288,7 +293,7 @@ mod tests {
         let test_cases = [
             (Key::escape(), VimCommand::ExitToNormal),
             (Key::enter(), VimCommand::NewLine),
-            (Key::backspace(), VimCommand::DeleteChar),
+            (Key::backspace(), VimCommand::DeleteCharBackward),
         ];
 
         for (key, expected_cmd) in &test_cases {
@@ -326,15 +331,28 @@ mod tests {
             input: String::new(),
         };
 
-        let test_cases = [
-            (Key::escape(), VimCommand::ExitToNormal),
-            (Key::enter(), VimCommand::ExitToNormal), // 簡略化
-        ];
+        // Test escape
+        let cmd = mapper.map_key(&Key::escape(), &mode);
+        assert_eq!(cmd, VimCommand::ExitToNormal);
 
-        for (key, expected_cmd) in &test_cases {
-            let cmd = mapper.map_key(key, &mode);
-            assert_eq!(cmd, *expected_cmd);
-        }
+        // Test enter with empty command
+        let cmd = mapper.map_key(&Key::enter(), &mode);
+        assert_eq!(cmd, VimCommand::ExecuteCommand(String::new()));
+
+        // Test enter with command
+        let mode_with_input = Mode::Command {
+            input: "q".to_string(),
+        };
+        let cmd = mapper.map_key(&Key::enter(), &mode_with_input);
+        assert_eq!(cmd, VimCommand::ExecuteCommand("q".to_string()));
+
+        // Test character input
+        let cmd = mapper.map_key(&Key::char('q'), &mode);
+        assert_eq!(cmd, VimCommand::CommandInput('q'));
+
+        // Test backspace
+        let cmd = mapper.map_key(&Key::backspace(), &mode);
+        assert_eq!(cmd, VimCommand::CommandBackspace);
     }
 
     #[test]

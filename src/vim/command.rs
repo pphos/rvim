@@ -18,6 +18,7 @@ pub enum VimCommand {
     // Editing commands
     InsertChar(char),
     DeleteChar,
+    DeleteCharBackward, // Backspace用
     DeleteLine,
     NewLine,
 
@@ -34,6 +35,11 @@ pub enum VimCommand {
     Quit,
     SaveAndQuit,
     ForceQuit,
+
+    // Command mode operations
+    CommandInput(char),
+    CommandBackspace,
+    ExecuteCommand(String),
 
     // Undo/Redo
     Undo,
@@ -111,6 +117,36 @@ impl VimCommand {
                     Ok(CommandResult::None)
                 }
             }
+            VimCommand::DeleteCharBackward => {
+                // Backspace: カーソルの左の文字を削除してカーソルを左に移動
+                if cursor.col > 0 {
+                    cursor.move_left().ok();
+                    if let Some(deleted) = buffer.delete_char(*cursor)? {
+                        Ok(CommandResult::DeletedChar(deleted))
+                    } else {
+                        Ok(CommandResult::None)
+                    }
+                } else if cursor.row > 0 {
+                    // 行の先頭で前の行と結合
+                    let current_line = buffer.line(cursor.row)?.to_string();
+                    let prev_line_length = buffer.line_length(cursor.row - 1)?;
+                    
+                    buffer.delete_line(cursor.row)?;
+                    cursor.row -= 1;
+                    cursor.col = prev_line_length;
+                    
+                    // 削除した行の内容を前の行に追加
+                    for ch in current_line.chars() {
+                        buffer.insert_char(*cursor, ch)?;
+                        cursor.move_right(buffer.line_length(cursor.row)?).ok();
+                    }
+                    cursor.col = prev_line_length; // カーソルを結合位置に戻す
+                    
+                    Ok(CommandResult::None)
+                } else {
+                    Ok(CommandResult::None)
+                }
+            }
             VimCommand::DeleteLine => {
                 if let Some(deleted) = buffer.delete_line(cursor.row)? {
                     // カーソル位置を調整
@@ -153,6 +189,20 @@ impl VimCommand {
             VimCommand::Quit => Ok(CommandResult::QuitRequested),
             VimCommand::SaveAndQuit => Ok(CommandResult::SaveAndQuitRequested),
             VimCommand::ForceQuit => Ok(CommandResult::ForceQuitRequested),
+            VimCommand::CommandInput(_) | VimCommand::CommandBackspace => {
+                // Command mode input is handled by mode manager
+                Ok(CommandResult::ModeTransition)
+            }
+            VimCommand::ExecuteCommand(cmd) => {
+                // Parse and execute command
+                match cmd.as_str() {
+                    "q" => Ok(CommandResult::QuitRequested),
+                    "w" => Ok(CommandResult::SaveRequested),
+                    "wq" => Ok(CommandResult::SaveAndQuitRequested),
+                    "q!" => Ok(CommandResult::ForceQuitRequested),
+                    _ => Ok(CommandResult::None), // Unknown command
+                }
+            }
             VimCommand::MoveWordForward | VimCommand::MoveWordBackward => {
                 // TODO: Implement word movement
                 Ok(CommandResult::None)
