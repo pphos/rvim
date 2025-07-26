@@ -62,8 +62,13 @@ impl Editor {
 
         // バッファ内容を描画
         for (row, line) in self.buffer.to_string().lines().enumerate() {
-            self.terminal
-                .write_at(rvim::TerminalPosition::new(0, row as u16), line)?;
+            // カーソル行の場合、カーソル位置をハイライト
+            if row == self.cursor.row {
+                self.render_line_with_cursor_highlight(row, line)?;
+            } else {
+                self.terminal
+                    .write_at(rvim::TerminalPosition::new(0, row as u16), line)?;
+            }
         }
 
         // ステータスライン描画
@@ -83,6 +88,15 @@ impl Editor {
         self.terminal
             .write_at(rvim::TerminalPosition::new(0, status_row), &status)?;
 
+        // Commandモードの場合、入力コマンドを表示
+        if let rvim::vim::Mode::Command { input } = self.mode_manager.current() {
+            let command_line = format!(":{}", input);
+            self.terminal.write_at(
+                rvim::TerminalPosition::new(0, status_row.saturating_sub(1)),
+                &command_line,
+            )?;
+        }
+
         // カーソル位置に移動
         self.terminal.move_cursor(rvim::TerminalPosition::new(
             self.cursor.col as u16,
@@ -90,6 +104,36 @@ impl Editor {
         ))?;
 
         self.terminal.flush()?;
+        Ok(())
+    }
+
+    fn render_line_with_cursor_highlight(&mut self, row: usize, line: &str) -> Result<()> {
+        use crossterm::style::Color;
+        
+        self.terminal.move_cursor(rvim::TerminalPosition::new(0, row as u16))?;
+        
+        let chars: Vec<char> = line.chars().collect();
+        
+        for (col, &ch) in chars.iter().enumerate() {
+            if col == self.cursor.col {
+                // カーソル位置の文字をハイライト
+                self.terminal.set_background_color(Color::White)?;
+                self.terminal.set_foreground_color(Color::Black)?;
+                self.terminal.write(&ch.to_string())?;
+                self.terminal.reset_colors()?;
+            } else {
+                self.terminal.write(&ch.to_string())?;
+            }
+        }
+        
+        // カーソルが行末を超えている場合の処理
+        if self.cursor.col >= chars.len() {
+            // 行末にカーソルを表示
+            self.terminal.set_background_color(Color::White)?;
+            self.terminal.write(" ")?;
+            self.terminal.reset_colors()?;
+        }
+        
         Ok(())
     }
 
@@ -110,10 +154,18 @@ impl Editor {
             }
             rvim::vim::CommandResult::SaveRequested => {
                 self.save_file()?;
+                // Commandモードから実行された場合はNormalモードに戻る
+                if self.mode_manager.current().is_command() {
+                    self.mode_manager.enter_normal();
+                }
             }
             rvim::vim::CommandResult::QuitRequested => {
                 if self.buffer.is_modified() {
                     // 変更がある場合は警告を表示（簡略化）
+                    // Commandモードから実行された場合はNormalモードに戻る
+                    if self.mode_manager.current().is_command() {
+                        self.mode_manager.enter_normal();
+                    }
                     return Ok(());
                 }
                 self.should_quit = true;
@@ -158,6 +210,24 @@ impl Editor {
                 self.mode_manager.enter_command();
             }
             VimCommand::ExitToNormal => {
+                self.mode_manager.enter_normal();
+            }
+            VimCommand::CommandInput(ch) => {
+                if let rvim::vim::Mode::Command { input } = self.mode_manager.current() {
+                    let mut new_input = input.clone();
+                    new_input.push(*ch);
+                    self.mode_manager.update_command_input(new_input)?;
+                }
+            }
+            VimCommand::CommandBackspace => {
+                if let rvim::vim::Mode::Command { input } = self.mode_manager.current() {
+                    let mut new_input = input.clone();
+                    new_input.pop();
+                    self.mode_manager.update_command_input(new_input)?;
+                }
+            }
+            VimCommand::ExecuteCommand(_) => {
+                // ExecuteCommand処理後はNormalモードに戻る
                 self.mode_manager.enter_normal();
             }
             _ => {}
